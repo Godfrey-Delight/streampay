@@ -13,15 +13,26 @@ The scheduled workflow runs a fresh StreamPay lifecycle on Stellar testnet:
    only after Soroban RPC simulation succeeds.
 
 Each run starts a newly created stream and never depends on stream ids or state
-from an earlier run. The recipient account is stable so testnet claim proceeds
-remain recoverable. The bot secret key is used only as a GitHub Actions secret.
-Set these repository settings to enable live runs:
+from an earlier run. The recipient is deterministically derived from the sender
+key. When a sender secret is configured, the recipient account is stable and
+its claims remain recoverable; with the default ephemeral sender, the testnet
+balances are disposable and both keys are discarded after the run.
+If no sender secret is configured, the runner creates an ephemeral keypair in
+memory and funds it from the testnet Friendbot. A configured sender secret is
+optional and is used only when present. The runner verifies the RPC-reported
+network passphrase before funding or submitting transactions; the report says
+`unverified` until that check succeeds. The RPC URL must use HTTPS, and any
+Friendbot override must be the official `https://friendbot.stellar.org/`
+endpoint.
 
-- Secret `STREAMPAY_CANARY_SECRET_KEY`: the testnet bot's Stellar secret key.
+Set these repository variables to enable live runs:
+
 - Variable `STREAMPAY_CANARY_CONTRACT_ID`: deployed testnet StreamPay contract.
 - Optional variable `STREAMPAY_CANARY_TOKEN_ID`: SEP-41 token contract id; by
   default the testnet native XLM Stellar Asset Contract is used.
 - Optional variable `STREAMPAY_CANARY_RPC_URL`: alternate testnet Soroban RPC.
+- Optional secret `STREAMPAY_CANARY_SECRET_KEY`: a testnet sender key; omit it
+  to use an ephemeral keypair funded by Friendbot.
 - Optional secret `ONCALL_WEBHOOK_URL`: Slack/Discord-compatible on-call
   webhook. If it is absent, the exact alert is still written to the workflow
   summary and uploaded evidence artifact.
@@ -37,9 +48,10 @@ Local validation (Node.js 22.6+):
 
 ```bash
 cd tools/canary
-npm ci
+npm ci --ignore-scripts
 npm test
 npm run typecheck
+npm audit --omit=dev --audit-level=high
 npm run canary
 ```
 

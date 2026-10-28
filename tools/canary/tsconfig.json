@@ -1,11 +1,15 @@
 {
   "compilerOptions": {
+    "baseUrl": ".",
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "paths": {
+      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
+    },
     "types": ["node"],
     "skipLibCheck": true
   },

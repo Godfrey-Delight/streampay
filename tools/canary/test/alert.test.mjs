@@ -5,6 +5,7 @@ import { renderAlert } from "../alert.mjs";
 test("failure alert includes step, class, RPC excerpt, XDR, and run attribution", () => {
   const alert = renderAlert({
     status: "failed",
+    network: "testnet",
     contractId: "C123",
     attribution: {
       commit: "abc123",
@@ -20,6 +21,7 @@ test("failure alert includes step, class, RPC excerpt, XDR, and run attribution"
     },
   });
 
+  assert.match(alert, /Network: testnet/);
   assert.match(alert, /Step: claim partial amount/);
   assert.match(alert, /Failure class: simulation/);
   assert.match(alert, /RPC response: contract rejected/);

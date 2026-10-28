@@ -11,6 +11,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: testnet-canary-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -30,7 +34,11 @@ jobs:
 
       - name: Install canary dependencies
         working-directory: tools/canary
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Audit production dependencies
+        working-directory: tools/canary
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Test alert formatting
         working-directory: tools/canary
@@ -59,11 +67,17 @@ jobs:
         run: npm run canary
 
       - name: Deliver failure alert
-        if: ${{ always() && steps.live-canary.outcome == 'failure' }}
+        if: ${{ always() && steps.live-canary.outcome == 'failure' && hashFiles('tools/canary/canary-result.json') != '' }}
         working-directory: tools/canary
         env:
           ONCALL_WEBHOOK_URL: ${{ secrets.ONCALL_WEBHOOK_URL }}
         run: node alert.mjs canary-result.json
+
+      - name: Report missing canary evidence
+        if: ${{ always() && steps.live-canary.outcome == 'failure' && hashFiles('tools/canary/canary-result.json') == '' }}
+        run: |
+          echo "::error::The canary failed before writing canary-result.json; alert details are unavailable."
+          printf '## Canary failure\n\nThe runner failed before writing evidence, so the detailed alert could not be generated.\n' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload canary evidence
         if: always()
@@ -71,7 +85,7 @@ jobs:
         with:
           name: testnet-canary-${{ github.run_id }}-${{ github.sha }}
           path: tools/canary/canary-result.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Preserve canary failure status

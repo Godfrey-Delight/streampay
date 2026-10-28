@@ -6,7 +6,8 @@ export function renderAlert(result) {
     throw new Error("Cannot render a failure alert for a successful canary result");
   }
   const lines = [
-    "StreamPay testnet canary FAILED",
+    "StreamPay canary FAILED",
+    `Network: ${result.network ?? "unverified"}`,
     `Step: ${result.failure.step}`,
     `Failure class: ${result.failure.failureClass}`,
     `RPC response: ${result.failure.rpcExcerpt}`,
@@ -36,7 +37,7 @@ async function main() {
 
   if (process.env.GITHUB_STEP_SUMMARY) {
     const summary = [
-      "## Testnet canary failure",
+      "## Canary failure",
       "",
       ...alert.split("\n").map((line) => `- ${line}`),
       "",

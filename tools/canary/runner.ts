@@ -52,7 +52,7 @@ interface CanaryStep {
 interface CanaryResult {
   schemaVersion: 1;
   status: "passed" | "failed";
-  network: "testnet";
+  network: "unverified" | "testnet";
   contractId: string | null;
   tokenId: string | null;
   attribution: {
@@ -124,7 +124,7 @@ function newResult(contractId: string | null, tokenId: string | null): CanaryRes
   return {
     schemaVersion: 1,
     status: "failed",
-    network: "testnet",
+    network: "unverified",
     contractId,
     tokenId,
     attribution: attribution(),
@@ -163,6 +163,70 @@ function required(name: string): string {
   return value;
 }
 
+function configurationFailure(message: string): CanaryFailure {
+  return new CanaryFailure(message, "configuration", "configuration");
+}
+
+export function validateTestnetRpcUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw configurationFailure("STREAMPAY_CANARY_RPC_URL must be a valid HTTPS URL");
+  }
+  if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash) {
+    throw configurationFailure(
+      "STREAMPAY_CANARY_RPC_URL must be an HTTPS URL without credentials or a fragment"
+    );
+  }
+  return url.toString();
+}
+
+export function validateTestnetFriendbotUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw configurationFailure(
+      "STREAMPAY_CANARY_FRIENDBOT_URL must be https://friendbot.stellar.org/"
+    );
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "friendbot.stellar.org" ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw configurationFailure(
+      "STREAMPAY_CANARY_FRIENDBOT_URL must be https://friendbot.stellar.org/"
+    );
+  }
+  return url.origin;
+}
+
+export function verifyTestnetPassphrase(passphrase: string): "testnet" {
+  if (passphrase !== Networks.TESTNET) {
+    throw configurationFailure(
+      "Soroban RPC did not report the Stellar testnet network; refusing to run"
+    );
+  }
+  return "testnet";
+}
+
+export function createSenderKeypair(secretKey?: string): Keypair {
+  const secret = secretKey?.trim();
+  if (!secret) return Keypair.random();
+  try {
+    return Keypair.fromSecret(secret);
+  } catch {
+    throw configurationFailure("STREAMPAY_CANARY_SECRET_KEY is not a valid Stellar secret key");
+  }
+}
+
 async function wait(ms: number): Promise<void> {
   await new Promise((resolveWait) => setTimeout(resolveWait, ms));
 }
@@ -186,7 +250,8 @@ async function fundAccount(
   result: CanaryResult,
   server: rpc.Server,
   publicKey: string,
-  stepName: string
+  stepName: string,
+  friendbotUrl: string
 ): Promise<void> {
   try {
     await server.getAccount(publicKey);
@@ -196,7 +261,6 @@ async function fundAccount(
     // First-run accounts are expected to be absent; verify again after Friendbot.
   }
 
-  const friendbotUrl = process.env.STREAMPAY_CANARY_FRIENDBOT_URL ?? DEFAULT_FRIENDBOT_URL;
   let response: Response;
   try {
     response = await fetch(`${friendbotUrl}?addr=${encodeURIComponent(publicKey)}`);
@@ -462,24 +526,55 @@ export async function runCanary(): Promise<void> {
     }
 
     const configuredContract = required("STREAMPAY_CANARY_CONTRACT_ID");
-    const secret = required("STREAMPAY_CANARY_SECRET_KEY");
-    try {
-      keypair = Keypair.fromSecret(secret);
-    } catch {
-      throw new CanaryFailure(
-        "STREAMPAY_CANARY_SECRET_KEY is not a valid Stellar secret key",
-        "configuration",
-        "configuration"
+    if (!/^C[A-Z2-7]{55}$/.test(configuredContract)) {
+      throw configurationFailure(
+        "STREAMPAY_CANARY_CONTRACT_ID must be a C-prefixed Stellar contract id"
       );
     }
     result.contractId = configuredContract;
 
-    const rpcUrl = process.env.STREAMPAY_CANARY_RPC_URL ?? DEFAULT_RPC_URL;
+    const configuredToken = process.env.STREAMPAY_CANARY_TOKEN_ID?.trim();
+    if (configuredToken && !/^C[A-Z2-7]{55}$/.test(configuredToken)) {
+      throw configurationFailure(
+        "STREAMPAY_CANARY_TOKEN_ID must be a C-prefixed Stellar contract id"
+      );
+    }
+    const secret = process.env.STREAMPAY_CANARY_SECRET_KEY;
+    keypair = createSenderKeypair(secret);
+
+    const rpcUrl = validateTestnetRpcUrl(
+      process.env.STREAMPAY_CANARY_RPC_URL?.trim() || DEFAULT_RPC_URL
+    );
+    const friendbotUrl = validateTestnetFriendbotUrl(
+      process.env.STREAMPAY_CANARY_FRIENDBOT_URL?.trim() || DEFAULT_FRIENDBOT_URL
+    );
     server = new rpc.Server(rpcUrl);
-    await fundAccount(result, server, keypair.publicKey(), "fund sender with testnet Friendbot");
+    try {
+      result.network = verifyTestnetPassphrase((await server.getNetwork()).passphrase);
+    } catch (error) {
+      if (error instanceof CanaryFailure) throw error;
+      throw new CanaryFailure(
+        `Could not verify Soroban RPC network: ${excerpt(error)}`,
+        "configuration",
+        "configuration"
+      );
+    }
+    await fundAccount(
+      result,
+      server,
+      keypair.publicKey(),
+      "fund sender with testnet Friendbot",
+      friendbotUrl
+    );
 
     const recipient = deriveRecipientKeypair(keypair);
-    await fundAccount(result, server, recipient.publicKey(), "fund recipient with testnet Friendbot");
+    await fundAccount(
+      result,
+      server,
+      recipient.publicKey(),
+      "fund recipient with testnet Friendbot",
+      friendbotUrl
+    );
 
     const expirationLedger = (await server.getLatestLedger()).sequence + 10_000;
     const approve = new Contract(tokenId).call(
